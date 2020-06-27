@@ -1,0 +1,911 @@
+---
+title: <div style = "width:80%; margin:auto"><h1 style = "font-size:75%; font-family:Roboto;font-style:normal;text-align:center; margin-bottom:50px; margin-top:50px;">Data-Driven Analysis of the Federal Elections for the Presidency and the Senate</h1></div>
+author: <div style = "width:80%; margin:auto"><h2 style = "font-size:90W%; font-family:Roboto;font-style:normal; text-align:center;">Allen Lin</h2></div>
+date: <div style = "width:80%; margin:auto"><h2 style = "font-size:90%; font-family:Roboto;font-style:normal; text-align:center;">6/27/20</h2></div>
+output: html_document
+runtime: shiny
+---
+
+<style type="text/css">
+*{
+  font-family:Roboto;
+  font-style:normal;
+  background-color:#f5f5f5;
+}
+.main-container {
+  max-width: 1800px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.hr-style {
+    border: 0;
+    height: 1px;
+    background: #333;
+    background-image: linear-gradient(to right, #ccc, #333, #ccc);
+    width:90%;
+    margin:auto;
+    margin-top:50px;
+    margin-bottom:50px;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE,message=FALSE}
+library(googleVis)
+library(shiny)
+library(RCurl)
+library(dplyr)
+library(ggplot2)
+library(glmnet)
+library(plotly)
+electoral <- data.frame(
+    "region" = state.name,
+    "votes" = c(9,3,11,6,55,9,7,3,29,16,4,4,20,11,6,6,8,8,4,10,11,16,10,6,10,3,5,6,4
+                ,14,5,29,15,3,18,7,7,20,4,9,3,11,38,6,3,13,12,5,10,3)
+)
+electoral2 <- data.frame(
+    "region" = state.abb,
+    "votes" = c(9,3,11,6,55,9,7,3,29,16,4,4,20,11,6,6,8,8,4,10,11,16,10,6,10,3,5,6,4
+                ,14,5,29,15,3,18,7,7,20,4,9,3,11,38,6,3,13,12,5,10,3)
+)
+
+data <- read.csv("D:/Datasets/1976-2016-president.csv")
+data <- filter(data, (party == "democrat" | party == "republican")  & (writein == FALSE)) 
+data <- data %>%
+    mutate(percent_votes = data$candidatevotes/data$totalvotes) %>%
+    mutate(state = tolower(state))
+
+data1 <- read.csv("D:/Datasets/1976-2018-senate.csv")
+data1 <- filter(data1, (party == "democrat" | party == "republican")) 
+data1 <- data1 %>%
+    mutate(percent_votes = data1$candidatevotes/data1$totalvotes)
+
+
+data_un <- read.csv("D:/Datasets/1976-2018-house2.csv")
+data_un <- filter(data_un, (party == "democrat" | party == "republican")) 
+data_un <- data_un %>%
+    mutate(percent_votes = data_un$candidatevotes/data_un$totalvotes)
+db = matrix(ncol = 4)
+y = data_un[,1]
+years = unique(as.data.frame(y))
+for (i in 1:length(years[,1]))
+{
+    for (s in state.abb)
+    {
+        state_data_r <- filter(data_un, state_po == s & party == "republican" & year == years[i,1])
+        state_data_d <- filter(data_un, state_po == s & party == "democrat"  & year == years[i,1])
+        per_r <- sum(state_data_r$candidatevotes)/sum(state_data_r$totalvotes)
+        per_d<-sum(state_data_d$candidatevotes)/sum(state_data_d$totalvotes)
+        db <- rbind(db, c(year = years[i,1], state_po = s, party="republican", percent_votes=per_r))
+        db <- rbind(db, c(year = years[i,1], state_po = s, party="democrat", percent_votes=per_d))
+    }
+}
+data2 = data.frame(db)[-1,]
+data2<-data2[!(data2$percent_votes=='NaN'),]
+
+calcPres<-function(){
+    db = matrix(ncol = 2)
+    for (s in state.abb)
+    {
+        state_data_r <- filter(data, state_po == s & party == "republican")
+        state_data_d <- filter(data, state_po == s & party == "democrat")
+        lin_r <- lm(percent_votes ~ year, data = state_data_r)
+        lin_d <- lm(percent_votes ~ year, data = state_data_d)
+        coeffs_r <- coefficients(lin_r)
+        coeffs_d <- coefficients(lin_d)
+        next_y <- 2020
+        expected_r = coeffs_r[1] + coeffs_r[2]* next_y
+        expected_d = coeffs_d[1] + coeffs_d[2] * next_y
+        db <- rbind(db, c(s, expected_r / expected_d))
+    }
+    dframe = data.frame(region = state.name[match(db[,1],state.abb)], value = as.numeric(db[,2]))[-1,]
+    G <- gvisGeoChart(dframe, "region", "value",
+                      options=list(region="US", displayMode="regions",
+                                   colors="['#0d00ff', '#b04545' ,'#eb0e0e', '#ff0000']",
+                                   resolution="provinces",
+                                   width=800, height=500))
+    return(list(G, dframe))  
+}
+
+calcSen<-function(decade){
+    db = matrix(ncol = 2)
+    for (s in state.abb)
+    {
+        if (decade == TRUE)
+        {
+            state_data_r <- filter(data1, state_po == s & party == "republican" & year > 1999)
+            state_data_d <- filter(data1, state_po == s & party == "democrat" & year > 1999)
+        }
+        else
+        {
+            state_data_r <- filter(data1, state_po == s & party == "republican")
+            state_data_d <- filter(data1, state_po == s & party == "democrat")
+        }
+        lin_r <- lm(percent_votes ~ year, data = state_data_r)
+        lin_d <- lm(percent_votes ~ year, data = state_data_d)
+        coeffs_r <- coefficients(lin_r)
+        coeffs_d <- coefficients(lin_d)
+        next_y <- 2020
+        expected_r = coeffs_r[1] + coeffs_r[2]* next_y
+        expected_d = coeffs_d[1] + coeffs_d[2] * next_y
+        db <- rbind(db, c(s, expected_r / expected_d)) 
+    }
+    dframe = data.frame(region = db[,1], value = as.numeric(db[,2]))[-1,]
+    G <- gvisGeoChart(dframe, "region", "value",
+                      options=list(region="US", displayMode="regions",
+                                   colors="['#0d00ff', '#c74132', '#cf311f', '#ff0000']",
+                                   resolution="provinces",
+                                   width=800, height=500))
+    return(list(G, dframe))
+}
+
+calcHouse<-function(decade){
+    db = matrix(ncol = 2)
+    for (s in state.abb)
+    {
+        if (decade == TRUE)
+        {
+            state_data_r <- filter(data2, state_po == s & party == "republican" 
+                                   & as.numeric(year) > 1999)
+            state_data_d <- filter(data2, state_po == s & party == "democrat" 
+                                   & as.numeric(year) > 1999)
+        }
+        else
+        {
+            state_data_r <- filter(data2, state_po == s & party == "republican")
+            state_data_d <- filter(data2, state_po == s & party == "democrat")
+        }
+        lin_r <- lm(as.numeric(percent_votes) ~ as.numeric(year), data = state_data_r)
+        lin_d <- lm(as.numeric(percent_votes) ~ as.numeric(year), data = state_data_d)
+        coeffs_r <- coefficients(lin_r)
+        coeffs_d <- coefficients(lin_d)
+        next_y <- 2020
+        expected_r = coeffs_r[1] + coeffs_r[2]* next_y
+        expected_d = coeffs_d[1] + coeffs_d[2] * next_y
+        db <- rbind(db, c(s, expected_r / expected_d)) 
+    }
+    dframe = data.frame(region = db[,1], value = as.numeric(db[,2]))[-1,]
+    G <- gvisGeoChart(dframe, "region", "value",
+                      options=list(region="US", displayMode="regions",
+                                   colors="['#0d00ff', '#cf311f', '#ff0000']",
+                                   resolution="provinces",
+                                   width=800, height=500))
+    return(list(G,dframe))
+}
+
+createStatePlot <- function(st, version){
+        st = tolower(st)
+        state_data_r <- filter(data, state == st & party == "republican")
+        state_data_d <- filter(data, state == st & party == "democrat")
+        c1<-cor.test(state_data_r$percent_votes, state_data_r$year, method="pearson")
+        c2<-cor.test(state_data_d$percent_votes, state_data_d$year, method="pearson")
+        g1 <- ggplot(data = state_data_r, aes(x = year, y = percent_votes)) + geom_line() +
+            geom_smooth(method = "lm")
+        g2 <- ggplot(data = state_data_d, aes(x = year, y = percent_votes)) + geom_line() +
+            geom_smooth(method = "lm")
+        return(list(c1, c2, g1, g2))
+}
+```
+
+<hr class = "hr-style">
+<h2 style = "text-align:center; margin-bottom:20px"><b>Abstract</b></h2>
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h4 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h4></div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h4 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h4></div>
+
+<hr class = "hr-style">
+<h2 style = "text-align:center; margin-bottom:20px"><b>Motivation</b></h2>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h4 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h4></div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h4 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h4></div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h4 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h4></div>
+
+******
+
+<hr class = "hr-style">
+<h2 style = "text-align:center; margin-bottom:20px"><b>Base Statistic Analysis</b></h2>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h4 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h4></div>
+
+<div style = "width:80%; margin:auto;">
+```{r, eval = FALSE}
+myData <- subset(data, (year>(myYear()-1)) & (year < (myYear()+1)) & party == "democrat")
+gvisGeoChart(myData, 
+ locationvar = "state", colorvar = "percent_votes", 
+ options=list(region = "US", displayMode = "regions",
+              resolution = "provinces",
+              width = 800, height = 500,
+              colorAxis="{colors:['#FFFFFF', '#0000FF']}"))
+```
+</div>
+
+<div style = "width:80%; margin:auto;">
+```{r, echo=FALSE, message=FALSE}
+shinyApp(
+ui = fluidPage(
+  mainPanel(
+    align = "center",
+    h3(textOutput("year")),
+    sliderInput("Year", "Election year to be displayed:", 
+                    min=1976, max=2016, value=2016,  step=4,
+                    format="###0",animate=TRUE),
+   checkboxInput("dem", "View Democratic Side", value = FALSE),
+    htmlOutput("gvis2"),
+    width = 12
+  )
+),
+server = function(input, output){
+  dem <- reactive({
+        input$dem
+    })
+  myYear <- reactive({
+        input$Year
+    })
+  output$year <- renderText({
+        if (dem() == TRUE)
+        {
+            paste("Percentage of votes for the Democratic Party in the Election of ", myYear(), "in each State")       
+        }
+        else
+        {
+            
+            paste("Percentage of votes for the Republican Party in the Election of ", myYear(), "in each State")
+        }
+    })
+  output$gvis2<-renderGvis({
+        if (dem() == TRUE)
+        {
+            myData <- subset(data, 
+                             (year>(myYear()-1)) & (year < (myYear()+1)) & party == "democrat")
+            gvisGeoChart(myData, 
+                         locationvar = "state", colorvar = "percent_votes", 
+                         options=list(region = "US", displayMode = "regions",
+                                      resolution = "provinces",
+                                      width = 800, height = 500,
+                                      colorAxis="{colors:['#FFFFFF', '#0000FF']}"))
+        }
+        else
+        {
+            myData <- subset(data, 
+                             (year>(myYear()-1)) & (year < (myYear()+1)) & party == "republican")
+            gvisGeoChart(myData, 
+                         locationvar = "state", colorvar = "percent_votes", 
+                         options=list(region = "US", displayMode = "regions",
+                                      resolution = "provinces",
+                                      width = 800, height = 500,
+                                      colorAxis="{colors:['#FFFFFF', '#FF0000']}"))
+        }
+    })
+},
+options = list(width = "100%", height = 700)
+)
+```
+</div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+******
+
+<hr class = "hr-style">
+<h2 style = "text-align:center; margin-bottom:20px"><b>Linear Regression Models for Each State</b></h2>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+<div style = "width:90%; margin:auto;">
+```{r, eval = FALSE}
+createStatePlot <- function(st, version){
+  st = tolower(st)
+        state_data_r <- filter(data, state == st & party == "republican")
+        state_data_d <- filter(data, state == st & party == "democrat")
+        c1<-cor.test(state_data_r$percent_votes, state_data_r$year, method="pearson")
+        c2<-cor.test(state_data_d$percent_votes, state_data_d$year, method="pearson")
+        g1 <- ggplot(data = state_data_r, aes(x = year, y = percent_votes)) + geom_line() +
+            geom_smooth(method = "lm")
+        g2 <- ggplot(data = state_data_d, aes(x = year, y = percent_votes)) + geom_line() +
+            geom_smooth(method = "lm")
+        return(list(c1, c2, g1, g2))
+}
+```
+</div>
+
+<div style = "width:90%; margin:auto;">
+```{r,echo=FALSE,message=FALSE}
+createStatePlot <- function(st, version){
+    if (version == "pres"){
+        st = tolower(st)
+        state_data_r <- filter(data, state == st & party == "republican")
+        state_data_d <- filter(data, state == st & party == "democrat")
+        #lin_r <- lm(percent_votes ~ year, data = state_data_r)
+        c1<-cor.test(state_data_r$percent_votes, state_data_r$year, method="pearson")
+        c2<-cor.test(state_data_d$percent_votes, state_data_d$year, method="pearson")
+        #p1 <- plot_ly(data=state_data_r, x = ~year, y = ~percent_votes, name = "Title Here", type = "scatter")
+        #p2 <- plot_ly(data=state_data_d, x = ~year, y = ~percent_votes, name = "Title Here", type = "scatter")
+        g1 <- ggplot(data = state_data_r, aes(x = year, y = percent_votes)) + geom_line() +
+            geom_smooth(method = "lm")
+        g2 <- ggplot(data = state_data_d, aes(x = year, y = percent_votes)) + geom_line() +
+            geom_smooth(method = "lm")
+        #p1<-ggplotly(g1)
+        #p2<-ggplotly(g2)
+        #g1 <- plot_ly(state_data_r, x = ~year, y = ~percent_votes, color = "red", type = 'scatter', mode = 'line') %>%
+          #layout(title = "This is a title",
+          #       xaxis = list(title = "Year"),
+          #       yaxis = list(title = "Percent of Votes"))
+        #g2 <- plot_ly(state_data_d, x = ~year, y = ~percent_votes, color = "blue", type = 'scatter', mode = 'line') %>%
+          #layout(title = "This is a title",
+          #       xaxis = list(title = "Year"),
+          #       yaxis = list(title = "Percent of Votes"))
+        return(list(c1, c2, g1, g2))
+    }
+}
+shinyApp(
+ui = fluidPage(
+  mainPanel(
+    align = "center",
+    selectInput(inputId = "state_choices", label = "State",
+                    choices = state.name),
+    splitLayout(h4("Republican Percent of Votes"), h4("Democratic Percent of Votes")),
+    splitLayout(plotOutput("stateData1"),
+                plotOutput("stateData2")),
+    br(),
+    splitLayout(h4("Correlation between year and percentage of votes for Republicans"),
+                h4("Correlation between year and percentage of votes for Democrats")),
+    splitLayout(h5(textOutput("correl1")),
+                h5(textOutput("correl2"))),
+    width = 12
+  )
+),
+server = function(input, output){
+  select_state <- reactive({
+        input$state_choices
+    })
+  output$stateData1 <- renderPlot({
+        createStatePlot(select_state(), "pres")[3]
+    })
+    
+    output$stateData2 <- renderPlot({
+        createStatePlot(select_state(), "pres")[4]
+    })
+    
+    output$correl1 <- renderText({
+        as.numeric(createStatePlot(select_state(), "pres")[[1]][4])
+    })
+    
+    
+    output$correl2 <- renderText({
+        as.numeric(createStatePlot(select_state(), "pres")[[2]][4])
+    })
+},
+options = list(width = "100%", height = 700)
+)
+```
+</div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+******
+
+<hr class = "hr-style">
+<h2 style = "text-align:center; margin-bottom:20px"><b>Presidential Election of 2020 Voting Predictions for each State</b></h2>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+<div style = "width:90%;margin:auto;">
+```{r,eval=FALSE}
+calcPres<-function(){
+    db = matrix(ncol = 2)
+    for (s in state.abb)
+    {
+        state_data_r <- filter(data, state_po == s & party == "republican")
+        state_data_d <- filter(data, state_po == s & party == "democrat")
+        lin_r <- lm(percent_votes ~ year, data = state_data_r)
+        lin_d <- lm(percent_votes ~ year, data = state_data_d)
+        coeffs_r <- coefficients(lin_r)
+        coeffs_d <- coefficients(lin_d)
+        next_y <- 2020
+        expected_r = coeffs_r[1] + coeffs_r[2]* next_y
+        expected_d = coeffs_d[1] + coeffs_d[2] * next_y
+        db <- rbind(db, c(s, expected_r / expected_d))
+    }
+    dframe = data.frame(region = state.name[match(db[,1],state.abb)], value = as.numeric(db[,2]))[-1,]
+    G <- gvisGeoChart(dframe, "region", "value",
+                      options=list(region="US", displayMode="regions",
+                                   colors="['#0d00ff', '#b04545' ,'#eb0e0e', '#ff0000']",
+                                   resolution="provinces",
+                                   width=800, height=500))
+    return(list(G, dframe))  
+}
+```
+</div>
+
+<div style = "width:90%;margin:auto;">
+```{r, echo = FALSE}
+calcPres<-function(){
+    db = matrix(ncol = 2)
+    for (s in state.abb)
+    {
+        state_data_r <- filter(data, state_po == s & party == "republican")
+        state_data_d <- filter(data, state_po == s & party == "democrat")
+        lin_r <- lm(percent_votes ~ year, data = state_data_r)
+        lin_d <- lm(percent_votes ~ year, data = state_data_d)
+        coeffs_r <- coefficients(lin_r)
+        coeffs_d <- coefficients(lin_d)
+        next_y <- 2020
+        expected_r = coeffs_r[1] + coeffs_r[2]* next_y
+        expected_d = coeffs_d[1] + coeffs_d[2] * next_y
+        db <- rbind(db, c(s, expected_r / expected_d))
+    }
+    dframe = data.frame(region = state.name[match(db[,1],state.abb)], value = as.numeric(db[,2]))[-1,]
+    G <- gvisGeoChart(dframe, "region", "value",
+                      options=list(region="US", displayMode="regions",
+                                   colors="['#0d00ff', '#b04545' ,'#eb0e0e', '#ff0000']",
+                                   resolution="provinces",
+                                   width=800, height=500))
+    return(list(G, dframe))  
+}
+
+shinyApp(
+ui = fluidPage(
+  mainPanel(
+    align = "center",
+    splitLayout(h3(textOutput("republican_electoral")),
+                    h3(textOutput("democratic_electoral"))),
+    h3(textOutput("data_title")),
+    htmlOutput("gvis"),
+    width = 12
+  )
+),
+
+server = function(input, output){
+  output$data_title <- renderText({
+        paste("Estimated Proportion of Republican to Democratic Votes in the 2020 Election ", graphVersion(), "Regression Model")
+    })
+  
+  output$data_title <- renderText({
+        paste("Estimated Proportion of Republican to Democratic Votes in the 2020 Election By Presidential Regression Model")
+    })
+  
+  output$republican_electoral<-renderText({
+      dfr = inner_join(calcPres()[2][[1]], electoral, by = ("region"))
+      paste("Electoral Votes for Republicans:", sum((filter(dfr, value > 1))$votes))
+    })
+  output$democratic_electoral<-renderText({
+      dfr = inner_join(calcPres()[2][[1]], electoral, by = ("region"))
+      paste("Electoral Votes for Democrats:", sum((filter(dfr, value < 1))$votes))
+    })
+  output$gvis <- renderGvis({
+      calcPres()[1][[1]]
+    })
+},
+options = list(width = "100%", height = 700)
+)
+```
+</div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+******
+
+<hr class = "hr-style">
+<h2 style = "text-align:center; margin-bottom:20px"><b>Selection of Swing States</b></h2>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+```{r, eval=FALSE}
+# Dataframe with each state and its predicted corresponding voting proportion in 2020
+dframe = data.frame(region = db[,1], value = as.numeric(db[,2]))[-1,]
+d1<-dframe %>% arrange(abs(value-1)) %>% slice(c(1:10))
+
+# Creates a new column that indicates the swing states (states with values closest to 1)
+dframe<-dframe%>%
+  mutate(isten = as.integer(as.numeric(dframe$region %in% d1$region)))
+```
+
+```{r, echo=FALSE, message=FALSE}
+db = matrix(ncol = 2)
+for (s in state.abb)
+    {
+      state_data_r <- filter(data, state_po == s & party == "republican")
+      state_data_d <- filter(data, state_po == s & party == "democrat")
+      lin_r <- lm(percent_votes ~ year, data = state_data_r)
+      lin_d <- lm(percent_votes ~ year, data = state_data_d)
+      coeffs_r <- coefficients(lin_r)
+      coeffs_d <- coefficients(lin_d)
+      next_y <- 2020
+      expected_r = coeffs_r[1] + coeffs_r[2]* next_y
+      expected_d = coeffs_d[1] + coeffs_d[2] * next_y
+      db <- rbind(db, c(s, expected_r / expected_d))
+}
+dframe = data.frame(region = db[,1], value = as.numeric(db[,2]))[-1,]
+d1<-dframe %>% arrange(abs(value-1)) %>% slice(c(1:10))
+dframe<-dframe%>%
+mutate(isten = as.integer(as.numeric(dframe$region %in% d1$region)))
+dframe$hover <- with(dframe, paste(region, "<br>", "Is Swing State?", isten))
+borders = list(color=toRGB("purple"))
+map_options <- list(
+scope = "usa",
+projection = list(type="albers usa")
+)
+
+shinyApp(
+  ui = fluidPage(
+  mainPanel(
+    align = "center",
+    plotlyOutput("swing"),
+    width = 12
+    )
+  ),
+  server = function(input, output){
+  output$swing = renderPlotly({
+    chart <- plot_ly(dframe, z = ~isten, text = ~hover, locations=~region, 
+            type = "choropleth", locationmode = "USA-states",
+            color = ~isten, colors = "Greens", marker = list(line = borders)) %>%
+      layout(title = "Percent Votes Cast for Clinton in the 2016 Election<br><br>", geo = map_options)
+  })
+}
+)
+
+  
+```
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+******
+
+<hr class = "hr-style">
+<h2 style = "text-align:center; margin-bottom:20px"><b>Expansion of Code to Senate Election and House Election</b></h2>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+<div style = "width:90%;margin:auto;">
+```{r, eval=FALSE}
+calcSen<-function(decade){
+    db = matrix(ncol = 2)
+    for (s in state.abb)
+    {
+        if (decade == TRUE)
+        {
+            state_data_r <- filter(data1, state_po == s & party == "republican" & year > 1999)
+            state_data_d <- filter(data1, state_po == s & party == "democrat" & year > 1999)
+        }
+        else
+        {
+            state_data_r <- filter(data1, state_po == s & party == "republican")
+            state_data_d <- filter(data1, state_po == s & party == "democrat")
+        }
+        lin_r <- lm(percent_votes ~ year, data = state_data_r)
+        lin_d <- lm(percent_votes ~ year, data = state_data_d)
+        coeffs_r <- coefficients(lin_r)
+        coeffs_d <- coefficients(lin_d)
+        next_y <- 2020
+        expected_r = coeffs_r[1] + coeffs_r[2]* next_y
+        expected_d = coeffs_d[1] + coeffs_d[2] * next_y
+        db <- rbind(db, c(s, expected_r / expected_d)) 
+    }
+    dframe = data.frame(region = db[,1], value = as.numeric(db[,2]))[-1,]
+    G <- gvisGeoChart(dframe, "region", "value",
+                      options=list(region="US", displayMode="regions",
+                                   colors="['#0d00ff', '#c74132', '#cf311f', '#ff0000']",
+                                   resolution="provinces",
+                                   width=800, height=500))
+    return(list(G, dframe))
+}
+```
+</div>
+
+<div style = "width:90%;margin:auto;">
+```{r, echo = FALSE}
+calcPres_NEW<-function(decade){
+    db = matrix(ncol = 2)
+    for (s in state.abb)
+    {
+        if(decade==TRUE)
+        {
+          state_data_r <- filter(data, state_po == s & party == "republican" & year >1999)
+          state_data_d <- filter(data, state_po == s & party == "democrat" & year >1999)
+        }
+        else
+        {
+          state_data_r <- filter(data, state_po == s & party == "republican")
+          state_data_d <- filter(data, state_po == s & party == "democrat") 
+        }
+        lin_r <- lm(percent_votes ~ year, data = state_data_r)
+        lin_d <- lm(percent_votes ~ year, data = state_data_d)
+        coeffs_r <- coefficients(lin_r)
+        coeffs_d <- coefficients(lin_d)
+        next_y <- 2020
+        expected_r = coeffs_r[1] + coeffs_r[2]* next_y
+        expected_d = coeffs_d[1] + coeffs_d[2] * next_y
+        db <- rbind(db, c(s, expected_r / expected_d))
+    }
+    dframe = data.frame(region = state.name[match(db[,1],state.abb)], value = as.numeric(db[,2]))[-1,]
+    G <- gvisGeoChart(dframe, "region", "value",
+                      options=list(region="US", displayMode="regions",
+                                   colors="['#0d00ff', '#b04545' ,'#eb0e0e', '#ff0000']",
+                                   resolution="provinces",
+                                   width=800, height=500))
+    return(list(G, dframe))  
+}
+
+createStatePlot_NEW <- function(st, version, decade){
+    if (version == "pres"){
+        st = tolower(st)
+        if (decade == TRUE)
+        {
+            state_data_r <- filter(data, state == st & party == "republican" & year > 1999)
+            state_data_d <- filter(data, state == st & party == "democrat" & year > 1999)
+        }
+        else
+        {
+            state_data_r <- filter(data, state == st & party == "republican")
+            state_data_d <- filter(data, state == st & party == "democrat")
+        }
+        #lin_r <- lm(percent_votes ~ year, data = state_data_r)
+        c1<-cor.test(state_data_r$percent_votes, state_data_r$year, method="pearson")
+        c2<-cor.test(state_data_d$percent_votes, state_data_d$year, method="pearson")
+        g1 <- ggplot(data = state_data_r, aes(x = year, y = percent_votes)) + geom_line() +
+            geom_smooth(method = "lm")
+        g2 <- ggplot(data = state_data_d, aes(x = year, y = percent_votes)) + geom_line() +
+            geom_smooth(method = "lm")
+        return(list(c1, c2, g1, g2))
+    }else if (version == "senate"){
+        if (decade == TRUE)
+        {
+            state_data_r <- filter(data1, state == st & party == "republican" & year > 1999)
+            state_data_d <- filter(data1, state == st & party == "democrat" & year > 1999)
+        }
+        else
+        {
+            state_data_r <- filter(data1, state == st & party == "republican")
+            state_data_d <- filter(data1, state == st & party == "democrat")
+        }
+        #lin_r <- lm(percent_votes ~ year, data = state_data_r)
+        c1<-cor.test(state_data_r$percent_votes, state_data_r$year, method="pearson")
+        c2<-cor.test(state_data_d$percent_votes, state_data_d$year, method="pearson")
+        g1 <- ggplot(data = state_data_r, aes(x = year, y = percent_votes)) + geom_line() +
+            geom_smooth(method = "lm")
+        g2 <- ggplot(data = state_data_d, aes(x = year, y = percent_votes)) + geom_line() +
+            geom_smooth(method = "lm")
+        return(list(c1, c2, g1, g2))
+    }else{
+        st = state.abb[match(st, state.name)]
+        if (decade == TRUE)
+        {
+            state_data_r <- filter(data2, state_po == st & party == "republican" & year > 1999)
+            state_data_d <- filter(data2, state_po == st & party == "democrat" & year > 1999)
+        }
+        else
+        {
+            state_data_r <- filter(data2, state_po == st & party == "republican")
+            state_data_d <- filter(data2, state_po == st & party == "democrat")
+        }
+        #lin_r <- lm(percent_votes ~ year, data = state_data_r)
+        c1<-cor.test(as.numeric(state_data_r$percent_votes), as.numeric(state_data_r$year)
+                     , method="pearson")
+        c2<-cor.test(as.numeric(state_data_d$percent_votes), as.numeric(state_data_d$year)
+                     , method="pearson")
+        g1 <- ggplot(data = state_data_r, aes(x = as.numeric(year), y = as.numeric(percent_votes))) + geom_line() +
+            geom_smooth(method = "lm")
+        g2 <- ggplot(data = state_data_d, aes(x = as.numeric(year), y = as.numeric(percent_votes))) + geom_line() +
+            geom_smooth(method = "lm")
+        return(list(c1, c2, g1, g2))
+    }
+}
+
+shinyApp(
+ui = fluidPage(
+  titlePanel(
+        h1("2020 Elections Predictions and Analysis", align = "center")
+    ),
+    sidebarPanel(
+        radioButtons(inputId = "graph_choices", label = "Type of Analysis",
+                     choices = c("By Presidential", "By Senatorial", "By House")),
+        br(),
+        selectInput(inputId = "state_choices", label = "State",
+                    choices = state.name),
+        splitLayout(h4("Republican Percent of Votes"), h4("Democratic Percent of Votes")),
+        splitLayout(plotOutput("stateData1"),
+                    plotOutput("stateData2")),
+        br(),
+        splitLayout(h4("Correlation between year and percentage of votes for Republicans"),
+                    h4("Correlation between year and percentage of votes for Democrats")),
+        splitLayout(h5(textOutput("correl1")),
+                    h5(textOutput("correl2"))),
+        width = 6
+    ),
+    
+    mainPanel(
+        splitLayout(h3(textOutput("republican_electoral")),
+                    h3(textOutput("democratic_electoral"))),
+        h3(textOutput("data_title")),
+        checkboxInput("decade", "Calculate Regression from 2000+ only", value = FALSE),
+        htmlOutput("gvis"),
+        width = 6
+    )
+),
+
+server = function(input, output){
+    
+    graphVersion <- reactive({
+        input$graph_choices
+    })
+    
+    select_state <- reactive({
+        input$state_choices
+    })
+    
+    output$data_title <- renderText({
+        paste("Estimated Proportion of Republican to Democratic Votes in the 2020 Election ", graphVersion(), "Regression Model")
+    })
+    
+    output$year <- renderText({
+        if (dem() == TRUE)
+        {
+            paste("Percentage of votes for the Democratic Party in the Election of ", myYear(), "in each State")       
+        }
+        else
+        {
+            
+            paste("Percentage of votes for the Republican Party in the Election of ", myYear(), "in each State")
+        }
+    })
+    
+    decade <- reactive({
+        input$decade
+    })
+    
+    dem <- reactive({
+        input$dem
+    })
+    
+    output$republican_electoral<-renderText({
+        if(graphVersion()=="By Presidential")
+        {
+            #cat(file = stderr(), "Doing Presidential....")
+            dfr = inner_join(calcPres_NEW(decade())[2][[1]], electoral, by = ("region"))
+            paste("Electoral Votes for Republicans:", sum((filter(dfr, value > 1))$votes))
+                    
+        } else if (graphVersion()=="By Senatorial"){
+            #cat(file = stderr(), "Doing Senatorial...")
+            dfr = inner_join(calcSen(decade())[2][[1]], electoral2, by = ("region"))
+            #paste("Electoral Votes for Republicans:", sum((filter(dfr, value > 1))$votes))
+            paste("")
+        } else{
+            #cat(file = stderr(), "Doing House...")
+            dfr = inner_join(calcHouse(decade())[2][[1]], electoral2, by = ("region"))
+            #paste("Electoral Votes for Republicans:", sum((filter(dfr, value > 1))$votes))
+            paste("")
+        }
+    })
+    
+    output$democratic_electoral<-renderText({
+        if(graphVersion()=="By Presidential")
+        {
+            #cat(file = stderr(), "Doing Presidential....")
+            dfr = inner_join(calcPres_NEW(decade())[2][[1]], electoral, by = ("region"))
+            paste("Electoral Votes for Democrats:", sum((filter(dfr, value < 1))$votes))
+        } else if (graphVersion()=="By Senatorial"){
+            #cat(file = stderr(), "Doing Senatorial...")
+            dfr = inner_join(calcSen(decade())[2][[1]], electoral2, by = ("region"))
+            #paste("Electoral Votes for Democrats:", sum((filter(dfr, value < 1))$votes))
+            paste("")
+        } else{
+            #cat(file = stderr(), "Doing House...")
+            dfr = inner_join(calcHouse(decade())[2][[1]], electoral2, by = ("region"))
+            #paste("Electoral Votes for Democrats:", sum((filter(dfr, value < 1))$votes))
+            paste("")
+        }
+    })
+    
+    
+    output$gvis <- renderGvis({
+        if(graphVersion()=="By Presidential")
+        {
+            #cat(file = stderr(), "Doing Presidential....")
+            calcPres_NEW(decade())[1][[1]]
+        } else if (graphVersion()=="By Senatorial"){
+            #cat(file = stderr(), "Doing Senatorial...")
+            calcSen(decade())[1][[1]]
+        } else{
+            #cat(file = stderr(), "Doing House...")
+            calcHouse(decade())[1][[1]]
+        }
+    })
+    
+    output$stateData1 <- renderPlot({
+        if(graphVersion()=="By Presidential")
+        {
+            createStatePlot_NEW(select_state(), "pres",decade())[3]
+        } else if (graphVersion()=="By Senatorial"){
+            createStatePlot_NEW(select_state(), "senate",decade())[3]
+        } else{
+            createStatePlot_NEW(select_state(), "house",decade())[3]
+        }
+    })
+    
+    output$stateData2 <- renderPlot({
+        if(graphVersion()=="By Presidential")
+        {
+            createStatePlot_NEW(select_state(), "pres",decade())[4]
+        } else if (graphVersion()=="By Senatorial"){
+            createStatePlot_NEW(select_state(), "senate",decade())[4]
+        } else{
+            createStatePlot_NEW(select_state(), "house",decade())[4]
+        }
+    })
+    
+    output$correl1 <- renderText({
+        if(graphVersion()=="By Presidential")
+        {
+            as.numeric(createStatePlot_NEW(select_state(), "pres",decade())[[1]][4])
+        } else if (graphVersion()=="By Senatorial"){
+            as.numeric(createStatePlot_NEW(select_state(), "senate",decade())[[1]][4])
+        } else{
+            as.numeric(createStatePlot_NEW(select_state(), "house",decade())[[1]][4])
+        }
+    })
+    
+    
+    output$correl2 <- renderText({
+        if(graphVersion()=="By Presidential")
+        {
+            as.numeric(createStatePlot_NEW(select_state(), "pres",decade())[[2]][4])
+        } else if (graphVersion()=="By Senatorial"){
+            as.numeric(createStatePlot_NEW(select_state(), "senate",decade())[[2]][4])
+        } else{
+            as.numeric(createStatePlot_NEW(select_state(), "house",decade())[[2]][4])
+        }
+    })
+},
+options = list(width = "100%", height = 700)
+)
+```
+</div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+<div style = "width:80%; margin:auto; margin-bottom:30px;"><h3 style = "text-indent: 2.0em;">First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it! First of all, a little bit of introduction about myself. My name is Allen Lin and I am currently a high school senior. I've been doing computer science very passionately for the last two year and a half years. Topics that I have been interested in specifically are of course data science and analysis, machine learning, and algorithmic theory. I have also experimented in the fields of AI, game design, application design, and of course UI and UX. This project is one that is very beloved and I am glad you are taking the time to view it!</h3></div>
+
+## Inputs and Outputs
+
+You can embed Shiny inputs and outputs in your document. Outputs are automatically updated whenever inputs change.  This demonstrates how a standard R plot can be made interactive by wrapping it in the Shiny `renderPlot` function. The `selectInput` and `sliderInput` functions create the input widgets used to drive the plot.
+
+
+
+## Embedded Application
+
+It's also possible to embed an entire Shiny application within an R Markdown document using the `shinyAppDir` function. This example embeds a Shiny application located in another directory:
+
+
+Note the use of the `height` parameter to determine how much vertical space the embedded application should occupy.
+
+You can also use the `shinyApp` function to define an application inline rather then in an external directory.
+
+In all of R code chunks above the `echo = FALSE` attribute is used. This is to prevent the R code within the chunk from rendering in the document alongside the Shiny components.
+
+
+
